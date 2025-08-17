@@ -5,7 +5,9 @@ import dataloader
 import os
 import numpy as np
 import pickle as pkl
-from model.SimGNN import SimGNN
+from model.SimGNN import SimGNN 
+from model.GMN import GraphMatchingNetwork
+from model.ERIC import ERIC
 from torch_geometric.loader import DataLoader
 from sklearn.metrics import auc, roc_curve
 from tqdm import tqdm
@@ -56,12 +58,15 @@ def eval_one_epoch(model, graphs1_ori, graphs2_ori, y_ori, batch_size, device, e
         mse = 0.0
         for index, (graph1, graph2) in enumerate(tqdm(list(zip(data1, data2)))):
             batch_output = model(graph1.to(device), graph2.to(device))
+            # print(batch_output)
             y = torch.tensor(y_ori[st:st+len(graph1)], dtype=torch.float32, device=device)
-            if ((graph1.to(device).y == graph2.to(device).y) == (y == 1)).sum() != len(graph1):
-                print(graph1.y[:10])
-                print(graph2.y[:10])
-                print(y[:10])
-                raise Exception('Error!')
+            # print(y)
+            # raise Exception('no!!')
+            # if ((graph1.to(device).y == graph2.to(device).y) == (y == 1)).sum() != len(graph1):
+            #     print(graph1.y)
+            #     print(graph2.y)
+            #     print(y[:10])
+            #     raise Exception('Error!')
             st += len(graph1)
             pred = batch_output.cpu().numpy()
             # if not eval:
@@ -80,6 +85,10 @@ def eval(args, BestModel_FILE, Result_FILE, dataset, device):
 
     if args.model == 'simgnn':
         args = utils.set_simgnn_args(args)
+    elif args.model == 'gmn':
+        args = utils.set_gmn_args(args)
+    elif args.model == 'eric':
+        args = utils.set_eric_args(args)
     else:
         raise ValueError('No such model!')
     classes_train = dataset.train_classes
@@ -90,12 +99,21 @@ def eval(args, BestModel_FILE, Result_FILE, dataset, device):
     # for i in range(len(classes_train)):
     #     classes_train[i] = classes_train[i] + classes_dev[i]
     input_dim = graphs[0].x.shape[1]
-    model = SimGNN(args, input_dim).to(device)
+    if args.model == 'simgnn':
+            model = SimGNN(args, input_dim).to(device)
+    elif args.model == 'gmn':
+        model = GraphMatchingNetwork(args, input_dim).to(device)
+    elif args.model == 'eric':
+        model = ERIC(args, input_dim).to(device)
+    else:
+        raise ValueError('No such model!')
     model.load_state_dict(torch.load(f'{BestModel_FILE}.pth'))
     
     print('Processing dataset ...')
     id1_, id2_, graph_list1_, graph_list2_, y_, squeeze_test, squeeze_database,row_class = utils.generate_test_pair(graphs, classes_train, classes_test)
 
+    import time 
+    start_time = time.time()
     print('Database graph number: ', len(squeeze_database), 'Test graph number: ', len(squeeze_test))
     print('Test pair number: ', len(graph_list1_))
     std_dense = np.array(y_).reshape(len(squeeze_test), len(squeeze_database))
@@ -109,6 +127,9 @@ def eval(args, BestModel_FILE, Result_FILE, dataset, device):
 
     index = np.argsort(pred_dense, axis=1)
     index = index[:, ::-1]
+
+    end_time = time.time()
+    print('EVAL time:', end_time - start_time)
 
     select_nm = 0
     maxx = 0
@@ -200,6 +221,10 @@ def pseudo_train(args, BestModel_FILE, Record_FILE, dataset, device):
 
     if args.model == 'simgnn':
         args = utils.set_simgnn_args(args)
+    elif args.model == 'gmn':
+        args = utils.set_gmn_args(args)
+    elif args.model == 'eric':
+        args = utils.set_eric_args(args)
     else:
         raise ValueError('No such model!')
     if args.semi_method == 'pseudo':
@@ -246,7 +271,14 @@ def pseudo_train(args, BestModel_FILE, Record_FILE, dataset, device):
         record['dev_auc'] = []
 
         print(f'label_rate = {label_rate} ...\n')
-        model = SimGNN(args, input_dim).to(device)
+        if args.model == 'simgnn':
+            model = SimGNN(args, input_dim).to(device)
+        elif args.model == 'gmn':
+            model = GraphMatchingNetwork(args, input_dim).to(device)
+        elif args.model == 'eric':
+            model = ERIC(args, input_dim).to(device)
+        else:
+            raise ValueError('No such model!')
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
         for epoch in range(args.epochs):
@@ -355,154 +387,13 @@ if args.model == 'simgnn':
     Record_FILE += str(args.histogram)
     Result_FILE += str(args.histogram)
 
-# if args.train:
-#     pseudo_train(args, BestModel_FILE, Record_FILE, dataset, device)
+import time
+start_time = time.time()
+if args.train:
+    pseudo_train(args, BestModel_FILE, Record_FILE, dataset, device)
+end_time = time.time()
+
+print('Duration:', end_time-start_time)
 # if args.test:
     # eval(args, BestModel_FILE, Result_FILE, dataset, device)
 pred_dense, std_dense, squeeze_test, squeeze_database, row_class, graph_list1_, graph_list2_ = eval(args, BestModel_FILE, Result_FILE, dataset, device)
-# %%
-# index = np.argsort(pred_dense, axis=1)
-# index = index[:, ::-1]
-for select_nm in range(10):
-    # select_nm = 0
-    # select_nm = 95
-
-    # maxx = 0
-    # for i in range(len(pred_dense)):
-    #     if graph_list1_[i * pred_dense.shape[1]].x.shape[0] > 15:
-    #         continue
-    #     ap = 0
-    #     add = 0
-    #     for j in range(len(std_dense[0])):
-    #         if std_dense[i][index[i, j]] == 1:
-    #             add += 1
-    #             ap += add / (j + 1)
-    #     ap /= add
-    #     if ap > maxx:
-    #         maxx = ap
-    #         select_nm = i
-    # if select_nm == -1:
-    #     min_node = 1000
-    #     for i in range(len(pred_dense)):
-    #         if graph_list1_[i * pred_dense.shape[1]].x.shape[0] < min_node:
-    #             min_node = graph_list1_[i * pred_dense.shape[1]].x.shape[0]
-    #             select_nm = i
-
-
-    # ith = 0
-    # cal = [641, 661, 1172, 702, 1138, 653, 852, 717, 798, 1030]
-    # simiscore = [0.9898102, 0.98917526, 0.98875344, 0.9882459, 0.98736095, 0.98691493, 0.98654085, 0.98645926, 0.98645335, 0.9858268]
-    # cal = []
-    # cal = []
-    # simiscore = []
-
-    # for i in range(10):
-    #     cal.append(index[select_nm][i])
-    #     simiscore.append(pred_dense[select_nm][index[select_nm][i]])
-
-    # print(cal)
-    # print(simiscore)
-    # print(f'The {ith}-th similar to {select_nm} is {iid}')
-    # print(f'query {select_nm}\'s node num is {graph_list1_[select_nm * pred_dense.shape[1]].x.shape[0]}, category is {graph_list1_[select_nm * pred_dense.shape[1]].y.item()}')
-    # print(f'database {iid}\'s node num is {graph_list2_[iid].x.shape[0]}, category is {graph_list2_[iid].y.item()}')
-    # print(f'Similarity score is pred:{pred_dense[select_nm][iid]}, std:{std_dense[select_nm][iid]}')
-    # print(graph_list1_[select_nm * pred_dense.shape[1]].edge_index.shape)
-
-    # ap = 0
-    # add = 0
-    # for j in range(len(std_dense[0])):
-    #     if std_dense[select_nm][index[select_nm, j]] == 1:
-    #         add += 1
-    #         ap += add / (j + 1)
-    # print(f'mAP of selected_num:', ap / add)
-
-    import networkx as nx
-    import matplotlib.pyplot as plt
-
-    graph = graph_list1_[select_nm * std_dense.shape[1]]
-    edge_index = graph.edge_index
-    # print(edge_index)
-    graph_nx = nx.Graph()
-    graph_nx.add_edges_from(edge_index.T.numpy())
-    n_node = graph_nx.number_of_nodes()
-    # print(n_node)
-    if(graph.x is None):
-        # node_labels = np.array([1] * graph.x.shape[0])
-        n_node = graph.number_of_nodes()
-        node_labels = np.array([1] * n_node)
-    else:
-        Y = torch.argmax(graph.x, dim=1)
-        node_labels = Y.numpy()
-    S = list(set(node_labels))
-    print(S)
-    iid = range(len(S))
-    M = dict(list(zip(S,iid)))
-    print(M)
-    node_classes = len(S)
-
-    start_color = np.array([68,2,84], dtype = np.int32)
-    mid_color = np.array([50,191,182], dtype = np.int32)
-    end_color = np.array([246,249,17], dtype = np.int32)
-
-    add_blue = 140 
-    del_else = -20 
-    vec1 = mid_color - start_color
-    vec2 = end_color - mid_color
-
-    category = graph.y.item()
-
-    graph = nx.Graph()
-    graph.add_edges_from(edge_index.T.numpy())
-
-    fig = plt.figure(figsize=(10,10))
-    colors = []
-    ref = (node_classes-1) / 2
-    for i in range(node_classes):
-
-        if(i <= ref):
-            color = np.round(start_color + 1.0 * vec1 * i / ref).astype(np.int32)
-        else:
-            color = np.round(mid_color + 1.0 * vec2 * (i-ref) / (node_classes-1 - ref)).astype(np.int32)
-    #         add = int(round(1.0*add_blue*pow((ref - abs(i - ref)) / ref, 2)))
-    #         dele = int(round(1.0*del_else*pow((ref - abs(i - ref)) / ref, 4)))
-        colors.append("#%02x%02x%02x" % (color[0], color[1], color[2]))
-    C = [colors[M[i]] for i in node_labels]
-    C = ['Orange'] * n_node
-    print(C)
-    nx.draw(graph, pos=nx.spring_layout(graph), node_color = C, node_size=1005,linewidths=4, arrows = False)
-    # plt.savefig(f'fig/case/{args.dataset}_query_{select_nm}_{category}.pdf')
-    # plt.savefig(f'fig/case/reverse/{args.dataset}_query_{select_nm}_{category}.pdf')
-    plt.savefig(f'fig/case/sample/{args.dataset}_{select_nm}.pdf')
-
-    # for ith,(iiad, sim) in enumerate(zip(cal, simiscore)):
-    #     graph = graph_list2_[iiad]
-    #     edge_index = graph.edge_index
-    #     if(graph.x is None):
-    #         node_labels = np.array([1] * graph.x.shape[0])
-    #     else:
-    #         Y = torch.argmax(graph.x, dim=1)
-    #         node_labels = Y.numpy()
-    #     S = list(set(node_labels))
-    #     iid = range(len(S))
-    #     M = dict(list(zip(S,iid)))
-    #     node_classes = len(S)
-
-    #     category = graph.y.item()
-    #     graph = nx.Graph()
-    #     graph.add_edges_from(edge_index.T.numpy())
-    #     fig = plt.figure(figsize=(10,10))
-    #     colors = []
-    #     ref = (node_classes-1) / 2
-    #     for i in range(node_classes):
-
-    #         if(i <= ref):
-    #             color = np.round(start_color + 1.0 * vec1 * i / ref).astype(np.int32)
-    #         else:
-    #             color = np.round(mid_color + 1.0 * vec2 * (i-ref) / (node_classes-1 - ref)).astype(np.int32)
-    #     #         add = int(round(1.0*add_blue*pow((ref - abs(i - ref)) / ref, 2)))
-    #     #         dele = int(round(1.0*del_else*pow((ref - abs(i - ref)) / ref, 4)))
-    #         colors.append("#%02x%02x%02x" % (color[0], color[1], color[2]))
-    #     C = [colors[M[i]] for i in node_labels]
-    #     nx.draw(graph, pos=nx.spring_layout(graph), node_color = C, node_size=1005,linewidths=4, arrows = False)
-    #     # plt.savefig(f'fig/case/{args.dataset}_database_{ith}th_{iiad}_forquery{select_nm}_{category}_{sim}.pdf')
-    #     plt.savefig(f'fig/case/reverse/{args.dataset}_database_{ith}th_{iiad}_forquery{select_nm}_{category}_{sim}.pdf')
