@@ -46,4 +46,4 @@ You can run our model with a single command:
 ```
 python train_one_way.py --dataset <DATANAME>
 ```
-where <DATANAME> is the name of the dataset to be tested, for example, MUTAG.
+where ```<DATANAME>``` is the name of the dataset to be tested, for example, ```MUTAG```.
